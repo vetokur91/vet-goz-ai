@@ -9,10 +9,22 @@ import os
 from pathlib import Path
 
 import gradio as gr
-from ultralytics import YOLO
 
 MODEL_PATH = Path(__file__).parent / "v2_best.pt"
 LLM_MODEL_NAME = "gemini-flash-latest"
+
+_model = None
+
+
+def get_model():
+    """Modeli ilk kullanimda yukler (lazy loading) - boylece program aciliste
+    hemen porta baglanir, Render/Hugging Face gibi platformlarin baslangic
+    zaman asimina takilmaz. Ilk fotograf biraz yavas olabilir, sonrakiler hizli olur."""
+    global _model
+    if _model is None:
+        from ultralytics import YOLO
+        _model = YOLO(str(MODEL_PATH))
+    return _model
 
 TURKCE_ISIMLER = {
     "anterior_uveitis": "Anterior Üveit",
@@ -67,9 +79,6 @@ zaman muayene eden hekime aittir.
 Kısa ve öz ol, madde işaretleri kullan, 300 kelimeyi geçme.
 """
 
-model = YOLO(str(MODEL_PATH))
-
-
 def get_api_key():
     key = os.environ.get("GEMINI_API_KEY")
     if key:
@@ -86,6 +95,7 @@ def get_client():
 
 
 def tahmin_et(img):
+    model = get_model()
     results = model.predict(img, verbose=False)
     r = results[0]
     probs = r.probs.data.tolist()
