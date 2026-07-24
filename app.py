@@ -6,6 +6,7 @@ import base64
 import html
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Mapping
 
@@ -80,31 +81,49 @@ Yanıtın başında tek cümlelik prototip uyarısı bulunmalı. 350 kelimeyi ge
 
 
 _model = None
+_model_lock = threading.Lock()
 
 
 def get_model():
-    """YOLO sınıflandırma modelini ilk analiz isteğinde yükler."""
+    """YOLO sınıflandırma modelini ilk analiz isteğinde güvenli biçimde yükler."""
     global _model
 
-    if _model is None:
+    if _model is not None:
+        return _model
+
+    with _model_lock:
+        if _model is not None:
+            return _model
+
         if not MODEL_PATH.is_file():
-            raise FileNotFoundError(f"Model dosyası bulunamadı: {MODEL_PATH}")
+            raise FileNotFoundError(
+                f"Model dosyası bulunamadı: {MODEL_PATH.name}. "
+                "GitHub ana dizininde v2_best.pt bulunmalıdır."
+            )
+
+        # İş parçacığı sınırları model yüklenmeden önce uygulanır.
+        import torch
+
+        torch.set_num_threads(1)
+        try:
+            torch.set_num_interop_threads(1)
+        except RuntimeError:
+            # Daha önce bir Torch işlemi başladıysa bu ayar ikinci kez yapılamayabilir.
+            pass
 
         from ultralytics import YOLO
 
         LOGGER.info("Model yükleniyor: %s", MODEL_PATH)
-        _model = YOLO(str(MODEL_PATH))
+        model = YOLO(str(MODEL_PATH), task="classify")
 
-        # Düşük kaynaklı Render ortamında gereksiz iş parçacığı kullanımını sınırlar.
         try:
-            import torch
-
-            torch.set_num_threads(1)
-            torch.set_num_interop_threads(1)
+            model.model.eval()
         except Exception:
-            LOGGER.debug("Torch iş parçacığı sınırı ayarlanamadı", exc_info=True)
+            LOGGER.debug("Model eval moduna alınamadı", exc_info=True)
 
-    return _model
+        _model = model
+        LOGGER.info("Model başarıyla yüklendi")
+        return _model
 
 
 def get_api_key() -> str | None:
@@ -113,20 +132,39 @@ def get_api_key() -> str | None:
 
 
 def predict_scores(image) -> dict[str, float]:
-    model = get_model()
-    result = model.predict(
-        source=image,
-        verbose=False,
-        imgsz=224,
-        device="cpu",
-    )[0]
+    if image is None:
+        raise ValueError("Analiz edilecek görüntü bulunamadı.")
 
-    probabilities = [float(value) for value in result.probs.data.cpu().tolist()]
+    # Saydam, gri tonlu veya farklı moddaki görselleri modelin beklediği RGB biçimine çevirir.
+    if hasattr(image, "convert"):
+        image = image.convert("RGB")
+
+    model = get_model()
+
+    import torch
+
+    with torch.inference_mode():
+        result = model.predict(
+            source=image,
+            verbose=False,
+            imgsz=224,
+            device="cpu",
+            save=False,
+        )[0]
+
+    if result.probs is None:
+        raise RuntimeError("Model sınıflandırma olasılığı üretmedi.")
+
+    probabilities = [
+        float(value)
+        for value in result.probs.data.detach().cpu().tolist()
+    ]
     names = result.names
 
     if len(probabilities) != EXPECTED_CLASS_COUNT:
         raise RuntimeError(
-            f"Beklenen {EXPECTED_CLASS_COUNT} sınıf yerine {len(probabilities)} sınıf üretildi."
+            f"Beklenen {EXPECTED_CLASS_COUNT} sınıf yerine "
+            f"{len(probabilities)} sınıf üretildi."
         )
 
     scores: dict[str, float] = {}
@@ -136,7 +174,6 @@ def predict_scores(image) -> dict[str, float]:
         scores[turkish_name] = probability
 
     return scores
-
 
 def confidence_metrics(scores: Mapping[str, float]) -> tuple[str, float, float, str]:
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
@@ -256,49 +293,94 @@ En yüksek skor: %{top_score * 100:.1f}
 
 
 def analyse_image(image, species: str):
+    """Önce yükleme durumunu, ardından model sonucunu akış halinde gösterir."""
     if image is None:
-        return (
+        yield (
             """
             <section class="confidence-card confidence-low">
                 <div class="eyebrow">GÖRÜNTÜ GEREKLİ</div>
                 <div class="diagnosis-name">Önce bir göz fotoğrafı yükleyin</div>
-            </section>
-            """,
-            """
-            <div class="empty-results">
-                Analiz sonuçları burada düzenli olarak gösterilecektir.
-            </div>
-            """,
-            "",
-        )
-
-    try:
-        scores = predict_scores(image)
-        return (
-            confidence_card(scores),
-            top_five_results(scores),
-            generate_ai_comment(scores, species),
-        )
-    except Exception:
-        LOGGER.exception("Görüntü analizi başarısız")
-        return (
-            """
-            <section class="confidence-card confidence-low">
-                <div class="eyebrow">TEKNİK HATA</div>
-                <div class="diagnosis-name">Analiz tamamlanamadı</div>
                 <p class="confidence-disclaimer">
-                    Dosyanın geçerli bir JPG veya PNG görüntüsü olduğundan emin olun.
+                    Fotoğraf yüklendikten sonra analiz düğmesine yeniden basın.
                 </p>
             </section>
             """,
             """
             <div class="empty-results">
-                Sonuç üretilemedi. Başka bir görüntüyle yeniden deneyin.
+                Analiz için geçerli bir JPG veya PNG görüntüsü yükleyin.
             </div>
             """,
-            "### Teknik hata\n\nGörüntü analizi tamamlanamadı.",
+            {},
+            "### Görüntü bekleniyor\n\nÖnce bir göz fotoğrafı yükleyin.",
+        )
+        return
+
+    # Kullanıcı model yüklenirken boş bir ekran görmesin.
+    yield (
+        """
+        <section class="confidence-card confidence-medium">
+            <div class="eyebrow">MODEL ÇALIŞIYOR</div>
+            <div class="diagnosis-name">Görüntü analiz ediliyor</div>
+            <p class="confidence-disclaimer">
+                Ücretsiz sunucuda ilk analiz model yüklenirken daha uzun sürebilir.
+                Sayfayı yenilemeden bekleyin.
+            </p>
+        </section>
+        """,
+        """
+        <div class="empty-results">
+            Model hazırlanıyor ve görüntü işleniyor…
+        </div>
+        """,
+        {},
+        "### Analiz sürüyor\n\nÖnce görüntü modeli çalıştırılıyor.",
+    )
+
+    try:
+        scores = predict_scores(image)
+        ai_waiting = (
+            "### Görüntü analizi tamamlandı\n\n"
+            "Model sonuçları hazır. AI destekli klinik değerlendirme ayrı olarak hazırlanıyor."
+            if get_api_key()
+            else
+            "### Görüntü analizi tamamlandı\n\n"
+            "Model sonuçları hazır. Gemini API anahtarı tanımlanmadığı için "
+            "metin tabanlı klinik değerlendirme pasiftir."
+        )
+        yield (
+            confidence_card(scores),
+            top_five_results(scores),
+            scores,
+            ai_waiting,
+        )
+    except Exception as exc:
+        LOGGER.exception("Görüntü analizi başarısız")
+        safe_error = html.escape(f"{type(exc).__name__}: {exc}")[:500]
+        yield (
+            f"""
+            <section class="confidence-card confidence-low">
+                <div class="eyebrow">TEKNİK HATA</div>
+                <div class="diagnosis-name">Analiz tamamlanamadı</div>
+                <p class="confidence-disclaimer">
+                    Sunucu mesajı: {safe_error}
+                </p>
+            </section>
+            """,
+            """
+            <div class="empty-results">
+                Model sonuç üretmedi. Aşağıdaki hata mesajı Render günlüklerinde de görülebilir.
+            </div>
+            """,
+            {},
+            f"### Analiz hatası\n\n`{type(exc).__name__}: {str(exc)[:400]}`",
         )
 
+
+def generate_ai_after_model(scores: Mapping[str, float], species: str) -> str:
+    """Gemini çağrısını model sonucundan ayırır; böylece LLM gecikse bile skorlar görünür."""
+    if not scores:
+        return "### Klinik değerlendirme üretilemedi\n\nÖnce görüntü modeli başarılı biçimde çalışmalıdır."
+    return generate_ai_comment(scores, species)
 
 def background_data_uri() -> str:
     if not BACKGROUND_PATH.is_file():
@@ -1019,6 +1101,8 @@ with gr.Blocks(title="Veteriner Göz Hastalıkları — AI Asistanı") as demo:
                 """
             )
 
+            scores_state = gr.State({})
+
             ai_output = gr.Markdown(
                 "Analiz tamamlandığında değerlendirme bu alanda gösterilecektir.",
                 elem_id="ai-output",
@@ -1054,16 +1138,24 @@ with gr.Blocks(title="Veteriner Göz Hastalıkları — AI Asistanı") as demo:
             """
         )
 
-    analyse_button.click(
+    analysis_event = analyse_button.click(
         fn=analyse_image,
         inputs=[image_input, species_input],
-        outputs=[confidence_output, results_output, ai_output],
+        outputs=[confidence_output, results_output, scores_state, ai_output],
         api_name="analiz_et",
+        show_progress="full",
+    )
+
+    analysis_event.then(
+        fn=generate_ai_after_model,
+        inputs=[scores_state, species_input],
+        outputs=ai_output,
+        show_progress="hidden",
     )
 
 
 if __name__ == "__main__":
-    demo.queue(default_concurrency_limit=1).launch(
+    demo.queue(default_concurrency_limit=1, max_size=10).launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("PORT", "7860")),
         show_error=False,
