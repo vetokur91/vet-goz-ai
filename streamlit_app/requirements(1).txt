@@ -1,0 +1,9 @@
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+streamlit==1.59.2
+torch
+torchvision
+ultralytics-opencv-headless
+pillow
+google-genai
