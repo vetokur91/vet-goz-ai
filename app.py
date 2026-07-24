@@ -351,21 +351,20 @@ body {{
 
 .background-eye {{
     position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: min(62vw, 1120px);
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
     z-index: 0;
     pointer-events: none;
     background-image: url("{BACKGROUND_DATA_URI}");
     background-size: cover;
-    background-position: 86% center;
+    background-position: center right;
     background-repeat: no-repeat;
     overflow: hidden;
-    opacity: 0.46;
-    filter: saturate(.88) contrast(1.06) brightness(.64);
-    -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.16) 18%, rgba(0,0,0,.72) 42%, black 66%);
-    mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.16) 18%, rgba(0,0,0,.72) 42%, black 66%);
+    opacity: 0.96;
+    filter: brightness(.94) contrast(1.08) saturate(1.12);
+    -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.18) 0%, rgba(0,0,0,.42) 26%, rgba(0,0,0,.82) 48%, black 66%);
+    mask-image: linear-gradient(90deg, rgba(0,0,0,.18) 0%, rgba(0,0,0,.42) 26%, rgba(0,0,0,.82) 48%, black 66%);
 }}
 
 .background-eye video {{
@@ -374,7 +373,7 @@ body {{
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: 86% center;
+    object-position: center right;
 }}
 
 .background-vignette {{
@@ -383,9 +382,9 @@ body {{
     z-index: 0;
     pointer-events: none;
     background:
-        radial-gradient(circle at 82% 38%, rgba(255,157,46,.10), transparent 34%),
-        linear-gradient(90deg, rgba(5,5,5,1) 0%, rgba(5,5,5,.99) 44%, rgba(5,5,5,.82) 63%, rgba(5,5,5,.38) 82%, rgba(5,5,5,.66) 100%),
-        linear-gradient(180deg, rgba(5,5,5,.18) 0%, rgba(5,5,5,.72) 100%);
+        radial-gradient(circle at 80% 38%, rgba(255,157,46,.07), transparent 38%),
+        linear-gradient(90deg, rgba(5,5,5,.98) 0%, rgba(5,5,5,.93) 27%, rgba(5,5,5,.67) 47%, rgba(5,5,5,.20) 69%, rgba(5,5,5,.04) 100%),
+        linear-gradient(180deg, rgba(5,5,5,.08) 0%, rgba(5,5,5,.18) 62%, rgba(5,5,5,.38) 100%);
 }}
 
 .gradio-container {{
@@ -839,12 +838,15 @@ body {{
 
     .background-eye {{
         width: 100vw;
-        opacity: .20;
-        background-position: 82% center;
+        opacity: .72;
+        background-position: 72% center;
+        filter: brightness(.88) contrast(1.06) saturate(1.08);
+        -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,.24) 0%, rgba(0,0,0,.55) 42%, black 72%);
+        mask-image: linear-gradient(90deg, rgba(0,0,0,.24) 0%, rgba(0,0,0,.55) 42%, black 72%);
     }}
 
     .background-eye video {{
-        object-position: 82% center;
+        object-position: 72% center;
     }}
 
     .developer-grid {{
