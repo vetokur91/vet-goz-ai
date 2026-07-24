@@ -1,9 +1,0 @@
---index-url https://download.pytorch.org/whl/cpu
---extra-index-url https://pypi.org/simple
-
-streamlit==1.59.2
-torch
-torchvision
-ultralytics
-pillow
-google-genai
